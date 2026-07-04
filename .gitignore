@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+ea-feedback-reports/
+test-context.json
+test-feedback.md
