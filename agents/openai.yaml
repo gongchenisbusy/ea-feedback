@@ -1,4 +1,4 @@
 interface:
   display_name: "EA Feedback"
-  short_description: "Audit EA runs and draft developer feedback"
-  default_prompt: "Use $ea-feedback to review recent EA usage and generate a developer-facing feedback report."
+  short_description: "Audit EA runs and submit feedback"
+  default_prompt: "Use $ea-feedback to review recent EA usage, generate a developer-facing feedback report, and submit it if I ask."

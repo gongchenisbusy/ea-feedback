@@ -1,6 +1,6 @@
 ---
 name: ea-feedback
-description: Audit Experimental Assistant (EA) test runs, manual trials, user-experience sessions, and package/check outputs to find developer-actionable issues and generate a feedback report. Use when the user asks to review EA usage/testing, create EA feedback, summarize EA problems, prepare an EA optimization issue, submit EA feedback to GitHub/email, or evaluate EA version-update readiness from recent Codex runs.
+description: Audit Experimental Assistant (EA) test runs, manual trials, user-experience sessions, and package/check outputs to find developer-actionable issues and generate or submit a feedback report. Use when the user asks to review EA usage/testing, create EA feedback, summarize EA problems, prepare an EA optimization issue, upload/submit EA feedback to GitHub/email/developers, or evaluate EA version-update readiness from recent Codex runs.
 ---
 
 # EA Feedback
@@ -19,8 +19,9 @@ This skill must not modify EA projects, EA skill files, raw research data, or EA
 4. Combine the user's subjective feedback with collected evidence. Use `references/issue-taxonomy.md` to classify issues.
 5. Run `scripts/render_feedback_report.py` to create a draft Markdown feedback report.
 6. Improve the report with agent judgment: merge duplicates, add root-cause hypotheses, add safe recommendations, and mark confidence.
-7. Read `references/submission-policy.md` before any submission. Submit only after user confirmation.
+7. Read `references/submission-policy.md` before any submission. Treat an explicit user request to upload/submit/send the finished feedback to developers as submission confirmation; do not ask again unless redaction risk, target ambiguity, or unavailable tooling blocks safe submission.
 8. Use GitHub issue submission as the default path when authenticated and available. Use email draft fallback for `ea_feedback@163.com` when GitHub is unavailable or the user prefers email.
+9. End by reporting the feedback file status: submitted URL/email draft path when submitted, or local path plus a concise upload suggestion when not submitted.
 
 ## Report Rules
 
@@ -33,13 +34,13 @@ This skill must not modify EA projects, EA skill files, raw research data, or EA
 
 Suggest submission when any of these are true:
 
-- The user explicitly asks to submit.
+- The user explicitly asks to submit, upload, send, or publish the finished feedback to developers.
 - The report contains several actionable issues.
 - The report is complete enough for developer action.
 - The feedback file is older than 24 hours and still unsubmitted.
 - The user says they are updating, releasing, or testing another EA version.
 
-Even when a trigger fires, preview the report or issue body and ask for user confirmation before creating a GitHub issue or sending email.
+If the current or earlier user instruction already contains explicit submission authorization, submit after redaction without a second confirmation. If submission is only recommended by heuristics, ask once before creating a GitHub issue or sending email.
 
 ## Resources
 
@@ -50,3 +51,4 @@ Even when a trigger fires, preview the report or issue body and ask for user con
 - `references/redaction-policy.md`: public-safe redaction guidance.
 - `scripts/collect_ea_context.py`: read-only EA context collector.
 - `scripts/render_feedback_report.py`: deterministic draft report renderer.
+- `scripts/resolve_submission_intent.py`: classify whether the user already authorized submission or should only be asked/suggested.

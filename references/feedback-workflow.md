@@ -75,6 +75,8 @@ Submission should be suggested when:
 - the report is older than 24 hours and unsubmitted,
 - the user is about to test or update another EA version.
 
+If the user already says to upload/submit/send the finished feedback to developers, treat that instruction as submission authorization and do not ask again after generating the file. This is especially important for feedback UX: the skill should reduce user effort rather than add another confirmation loop.
+
 ## Public Submission
 
 Default target:
@@ -89,7 +91,11 @@ Fallback email:
 ea_feedback@163.com
 ```
 
-Before submission, produce a public-safe issue/email body, redact sensitive data, and ask for user confirmation.
+Before submission, produce a public-safe issue/email body and redact sensitive data. Use the current user instruction to choose the submission path:
+
+- explicit upload/submit/send instruction: submit directly after redaction and report the URL or email result.
+- actionable report without explicit authorization: tell the user the file is ready and ask once whether to upload.
+- local-only or negative instruction: do not submit; report the local path.
 
 ## What Not To Do
 
@@ -97,4 +103,4 @@ Before submission, produce a public-safe issue/email body, redact sensitive data
 - Do not write feedback-only logging requirements into EA unless the recommendation is justified by EA's own UX/context-management needs.
 - Do not recommend removing raw data protection, review gates, provenance, traceability, or public-user safety boundaries just to reduce tokens or files.
 - Do not expose private local paths, tokens, browser profiles, institution access details, or raw research data in public issues.
-- Do not submit to GitHub or email without user confirmation.
+- Do not submit to GitHub or email when the user has not authorized it. An explicit instruction such as "生成后上传开发者端" counts as authorization.
