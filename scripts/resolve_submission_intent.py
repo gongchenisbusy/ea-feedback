@@ -41,8 +41,8 @@ def find_matches(patterns: list[str], text: str) -> list[str]:
 def classify(text: str, issue_count: int = 0, has_p0: bool = False, report_age_hours: float = 0.0) -> dict[str, Any]:
     normalized = " ".join(text.split())
     negative = find_matches(NEGATIVE_PATTERNS, normalized)
-    explicit = find_matches(EXPLICIT_SUBMIT_PATTERNS, normalized)
-    suggest_words = find_matches(SUGGEST_ONLY_PATTERNS, normalized)
+    explicit = [] if negative else find_matches(EXPLICIT_SUBMIT_PATTERNS, normalized)
+    suggest_words = [] if negative or explicit else find_matches(SUGGEST_ONLY_PATTERNS, normalized)
 
     if negative:
         intent = "defer_or_local"
