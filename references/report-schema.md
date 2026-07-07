@@ -65,6 +65,7 @@ The ID should be stable once the report is created. If a report is updated later
 - `ready_for_user_review`
 - `submitted_github`
 - `email_draft_prepared`
+- `submission_failed`
 - `deferred_by_user`
 
 ## Issue Writing Style

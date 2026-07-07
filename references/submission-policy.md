@@ -29,6 +29,21 @@ Suggested labels when available:
 
 Do not assume labels exist; issue creation should still work without labels.
 
+## Token-Light Duplicate Check
+
+Before creating a GitHub issue, only check whether the current `Feedback ID` already appears in existing issue titles or other lightweight metadata. Do not read issue bodies, issue comments, timelines, review threads, or unrelated issue content to decide whether the feedback is a duplicate.
+
+Recommended path:
+
+1. Extract the feedback ID, for example `EA-FB-YYYYMMDD-HHMMSS-slug`.
+2. Query issue metadata only, such as number/title/url/state.
+3. If an existing issue title contains the exact feedback ID, report `already_submitted`.
+4. Otherwise, create a new issue directly.
+
+Do not inspect semantic similarity across issue bodies. Duplicate triage is a developer-side responsibility, not an EA-feedback submission responsibility.
+
+Use `scripts/submit_feedback.py` when possible so this policy is enforced consistently.
+
 ## Submission Triggers
 
 Suggest submission when:
@@ -105,6 +120,25 @@ Suggested email subject:
 [EA-feedback] <Feedback ID> <short summary>
 ```
 
+## Submission Failure Channel
+
+Submission attempts must be bounded. Do not repeatedly try GitHub login, browser login, OAuth flows, email account setup, or network repair from this skill.
+
+Use this sequence:
+
+1. Try GitHub submission once when submission is authorized and `gh` is available/authenticated.
+2. If GitHub fails, prepare one local email draft fallback when the filesystem path is available.
+3. If both GitHub submission and email draft fallback fail, stop and report `submission_failed`.
+
+The failure message should be concise and include:
+
+- which channel failed: GitHub, email draft, or both;
+- the immediate reason, such as not authenticated, command unavailable, network/API failure, or unwritable draft path;
+- what the user can do manually, such as log in with `gh auth login`, open the repository issues page and paste the suggested issue body, or copy the email draft body into their email client;
+- how the user may ask Codex for help in a separate task, such as "请帮我连接 GitHub 并登录" or "请帮我打开浏览器创建这个 issue".
+
+EA-feedback should not itself operate browser login or email account connection after submission fails.
+
 ## Submission Record
 
 After submission, update the local feedback report or create a sidecar record outside the EA project:
@@ -118,6 +152,19 @@ url_or_file: ...
 confirmed_by_user: true
 ```
 
+For failed submissions, use:
+
+```yaml
+feedback_id: EA-FB-...
+submitted_at: ...
+channel: submission_failed
+target: gongchenisbusy/Experimental-Assistant
+url_or_file: null
+confirmed_by_user: true
+failure_reason: ...
+recommended_recovery: ...
+```
+
 Do not write this record into an EA experiment project unless the user explicitly chooses that storage location.
 
 ## User-Facing Status
@@ -126,4 +173,5 @@ Always close with one clear status line:
 
 - submitted: include the GitHub issue URL or sent-email destination.
 - email draft only: include the draft path and say it was not sent.
+- submission failed: include the failure reason and concise manual/Codex-assisted recovery options.
 - local only: include the report path and whether upload is recommended.

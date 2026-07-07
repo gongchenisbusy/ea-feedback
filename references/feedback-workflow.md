@@ -97,6 +97,14 @@ Before submission, produce a public-safe issue/email body and redact sensitive d
 - actionable report without explicit authorization: tell the user the file is ready and ask once whether to upload.
 - local-only or negative instruction: do not submit; report the local path.
 
+Use `scripts/submit_feedback.py` as the default submission helper when possible. It keeps submission token-light by checking duplicate feedback IDs through issue title metadata only, without reading issue bodies or comments.
+
+Submission is bounded:
+
+1. Try GitHub once when `gh` is available/authenticated.
+2. If GitHub fails, prepare one local email draft fallback.
+3. If both channels fail, report `submission_failed` with the immediate reason and concise recovery guidance. Do not try browser login, GitHub account connection, email account setup, or repeated network retries inside EA-feedback.
+
 ## What Not To Do
 
 - Do not modify EA project files or EA skill files.
@@ -104,3 +112,5 @@ Before submission, produce a public-safe issue/email body and redact sensitive d
 - Do not recommend removing raw data protection, review gates, provenance, traceability, or public-user safety boundaries just to reduce tokens or files.
 - Do not expose private local paths, tokens, browser profiles, institution access details, or raw research data in public issues.
 - Do not submit to GitHub or email when the user has not authorized it. An explicit instruction such as "生成后上传开发者端" counts as authorization.
+- Do not read existing issue bodies/comments to decide whether a feedback report is duplicated; exact feedback-ID metadata checks are enough before submission.
+- Do not keep retrying failed GitHub/email channels. Stop at the submission-failed channel and tell the user how to resolve it manually or in a separate Codex task.
