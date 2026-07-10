@@ -15,7 +15,7 @@ This skill must not modify EA projects, EA skill files, raw research data, or EA
 
 1. Identify the scope: current thread, selected EA project, package test output, manual trial, or user-supplied notes.
 2. Read `references/feedback-workflow.md` for the full operating procedure.
-3. Run `scripts/collect_ea_context.py` to collect read-only evidence into a JSON file.
+3. Run `scripts/collect_ea_context.py` to collect read-only evidence into a JSON file. It may summarize recent EA literature acquisition status sidecars and Zotero readiness files, but it must not read cookies, credentials, raw PDFs, or private full text.
 4. Combine the user's subjective feedback with collected evidence. Use `references/issue-taxonomy.md` to classify issues.
 5. Run `scripts/render_feedback_report.py` to create a draft Markdown feedback report.
 6. Improve the report with agent judgment: merge duplicates, add root-cause hypotheses, add safe recommendations, and mark confidence.

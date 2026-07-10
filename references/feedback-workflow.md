@@ -26,8 +26,10 @@ Collect evidence without modifying EA state:
 - Git status and recent changed files for the workspace.
 - User-provided notes and visible conversation summary.
 - Existing logs or command outputs supplied by the user.
+- Recent `literature/**/acquisition_status*.{md,json}` and `zotero_codex_readiness.*` sidecars, summarized as acquired/blocked counts only.
 
 Do not run mutating EA commands such as `ea eval project` or `ea brief project` unless the user explicitly requests it. Prefer reading existing artifacts.
+Do not read cookies, credentials, raw PDFs, or private full text while collecting literature status.
 
 ## Analysis Procedure
 

@@ -29,6 +29,25 @@ ERROR_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+LITERATURE_READY_STATUSES = {
+    "acquired",
+    "cache_verified",
+    "cached",
+    "reused-cache",
+    "reused_cache",
+    "downloaded",
+}
+LITERATURE_BLOCKED_STATUSES = {
+    "needs_login",
+    "needs-login",
+    "needs_subscription",
+    "needs-subscription",
+    "blocked",
+    "invalid_pdf",
+    "failed-nonpdf",
+    "retryable_error",
+}
+
 
 def run_command(args: list[str], cwd: Path, timeout: int = 10) -> dict[str, Any]:
     try:
@@ -141,6 +160,77 @@ def scan_findings(project: Path, limit: int = 20) -> list[dict[str, str]]:
     return findings
 
 
+def _literature_statuses_from_json(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    for key in ("targets", "items", "results", "records"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            value = list(value.values())
+        if isinstance(value, list):
+            return [str(item.get("status") or "").strip().lower() for item in value if isinstance(item, dict)]
+    nested = payload.get("external_acquisition_state")
+    return _literature_statuses_from_json(nested) if isinstance(nested, dict) else []
+
+
+def _literature_statuses_from_text(text: str) -> list[str]:
+    statuses: list[str] = []
+    for line in text.splitlines():
+        table_match = re.match(r"^\|\s*[^|]+\|\s*[^|]+\|\s*([a-zA-Z0-9_-]+)\s*\|", line)
+        yaml_match = re.match(r"^\s*-?\s*status:\s*['\"]?([a-zA-Z0-9_-]+)", line)
+        match = table_match or yaml_match
+        if match:
+            statuses.append(match.group(1).strip().lower())
+    return statuses
+
+
+def summarize_literature_acquisition(project: Path, limit: int = 8) -> dict[str, Any]:
+    literature = project / "literature"
+    if not literature.exists():
+        return {"status_file_count": 0, "acquired": 0, "blocked": 0, "status_refs": []}
+    candidates: set[Path] = set()
+    for pattern in (
+        "**/acquisition_status*.json",
+        "**/acquisition_status*.md",
+        "**/zotero_codex_readiness.json",
+        "**/zotero_codex_readiness.yml",
+        "**/zotero_codex_readiness.yaml",
+        "**/zotero_codex_readiness.md",
+    ):
+        candidates.update(path for path in literature.glob(pattern) if path.is_file())
+    suffix_priority = {".json": 3, ".yml": 2, ".yaml": 2, ".md": 1}
+    grouped: dict[tuple[Path, str], Path] = {}
+    for path in candidates:
+        key = (path.parent, path.stem)
+        current = grouped.get(key)
+        if current is None or suffix_priority.get(path.suffix.lower(), 0) > suffix_priority.get(current.suffix.lower(), 0):
+            grouped[key] = path
+    recent = sorted(grouped.values(), key=lambda path: path.stat().st_mtime, reverse=True)[:limit]
+    acquired = 0
+    blocked = 0
+    refs: list[str] = []
+    for path in recent:
+        refs.append(str(path.relative_to(project)))
+        text = read_text(path, limit=24000)
+        statuses: list[str] = []
+        if path.suffix.lower() == ".json":
+            try:
+                statuses = _literature_statuses_from_json(json.loads(text))
+            except json.JSONDecodeError:
+                statuses = []
+        if not statuses:
+            statuses = _literature_statuses_from_text(text)
+        acquired += sum(status in LITERATURE_READY_STATUSES for status in statuses)
+        blocked += sum(status in LITERATURE_BLOCKED_STATUSES for status in statuses)
+    return {
+        "status_file_count": len(recent),
+        "acquired": acquired,
+        "blocked": blocked,
+        "status_refs": refs,
+        "read_scope": "status sidecars only; no cookies, credentials, raw PDFs, or private full text",
+    }
+
+
 def summarize_project(project: Path) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "root": str(project),
@@ -160,6 +250,7 @@ def summarize_project(project: Path) -> dict[str, Any]:
             "open_items": count_files(project, "open-items"),
         },
         "reviews": summarize_reviews(project),
+        "literature_acquisition": summarize_literature_acquisition(project),
         "potential_findings": scan_findings(project),
     }
     for rel in summary["latest_eval_files"][:1] + summary["latest_brief_files"][:2]:
