@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import importlib.util
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,23 +53,39 @@ LITERATURE_BLOCKED_STATUSES = {
     "retryable_error",
 }
 
+EXECUTION_STATUSES = {"completed", "failed", "recovered", "partial"}
+
+
+def _utf8_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _decode_utf8(value: bytes | str | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
 
 def run_command(args: list[str], cwd: Path, timeout: int = 10) -> dict[str, Any]:
     try:
         proc = subprocess.run(
             args,
             cwd=str(cwd),
-            text=True,
+            text=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
+            env=_utf8_environment(),
         )
         return {
             "command": args,
             "returncode": proc.returncode,
-            "stdout": proc.stdout.strip(),
-            "stderr": proc.stderr.strip(),
+            "stdout": _decode_utf8(proc.stdout).strip(),
+            "stderr": _decode_utf8(proc.stderr).strip(),
         }
     except FileNotFoundError:
         return {"command": args, "available": False}
@@ -72,9 +93,68 @@ def run_command(args: list[str], cwd: Path, timeout: int = 10) -> dict[str, Any]
         return {
             "command": args,
             "timeout": timeout,
-            "stdout": (exc.stdout or "").strip() if isinstance(exc.stdout, str) else "",
-            "stderr": (exc.stderr or "").strip() if isinstance(exc.stderr, str) else "",
+            "stdout": _decode_utf8(exc.stdout).strip(),
+            "stderr": _decode_utf8(exc.stderr).strip(),
         }
+
+
+def discover_ea_cli(workspace: Path) -> dict[str, Any]:
+    candidates: list[tuple[str, list[str], str]] = []
+    explicit = os.environ.get("EA_BIN", "").strip()
+    if explicit:
+        parts = shlex.split(explicit, posix=os.name != "nt")
+        if parts:
+            candidates.append(("explicit_EA_BIN", parts, explicit))
+
+    try:
+        distribution = importlib.metadata.distribution("experimental-assistant")
+    except importlib.metadata.PackageNotFoundError:
+        distribution = None
+    if distribution is not None:
+        candidates.append(
+            (
+                "current_python_distribution_metadata",
+                [sys.executable, "-m", "ea"],
+                f"{sys.executable} -m ea (experimental-assistant {distribution.version})",
+            )
+        )
+
+    if importlib.util.find_spec("ea") is not None:
+        candidates.append(("current_python_module", [sys.executable, "-m", "ea"], f"{sys.executable} -m ea"))
+
+    venv_candidates = [
+        workspace / ".venv" / "Scripts" / "ea.exe",
+        workspace / ".venv" / "bin" / "ea",
+    ]
+    for project in find_ea_projects(workspace):
+        venv_candidates.extend([project / ".venv" / "Scripts" / "ea.exe", project / ".venv" / "bin" / "ea"])
+    for path in venv_candidates:
+        if path.is_file():
+            candidates.append(("project_virtualenv", [str(path)], str(path)))
+
+    path_ea = shutil.which("ea")
+    if path_ea:
+        candidates.append(("PATH", [path_ea], path_ea))
+
+    attempts: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for source, command, executable_ref in candidates:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        probe = run_command([*command, "version"], cwd=workspace)
+        attempts.append({"source": source, "executable_ref": executable_ref, "probe": probe})
+        if probe.get("returncode") == 0:
+            return {
+                "status": "available",
+                "source": source,
+                "command": command,
+                "executable_ref": executable_ref,
+                "probe": probe,
+                "attempts": attempts,
+            }
+    return {"status": "unknown", "source": "unknown", "command": None, "executable_ref": None, "attempts": attempts}
 
 
 def read_text(path: Path, limit: int = 12000) -> str:
@@ -231,6 +311,107 @@ def summarize_literature_acquisition(project: Path, limit: int = 8) -> dict[str,
     }
 
 
+def _normalize_execution_event(item: dict[str, Any], ref: str, index: int) -> dict[str, Any] | None:
+    status = str(item.get("status") or "").strip().lower()
+    if status not in EXECUTION_STATUSES:
+        return None
+    stage = str(item.get("stage") or "unknown").strip() or "unknown"
+    return {
+        "event_id": str(item.get("event_id") or f"{Path(ref).stem}-{index + 1}"),
+        "stage": stage,
+        "scope_id": str(item.get("scope_id") or item.get("run_id") or stage),
+        "status": status,
+        "attempt": int(item.get("attempt") or 1),
+        "artifact_count": int(item.get("artifact_count") or 0),
+        "error_code": str(item.get("error_code") or "") or None,
+        "next_action": str(item.get("next_action") or "") or None,
+        "occurred_at": str(item.get("occurred_at") or item.get("created_at") or ""),
+        "supersedes": [str(value) for value in item.get("supersedes") or []],
+        "reconciliation": str(item.get("reconciliation") or "") or None,
+        "evidence_ref": ref,
+    }
+
+
+def collect_execution_events(project: Path, limit: int = 200) -> dict[str, Any]:
+    candidates: set[Path] = set()
+    for pattern in (
+        ".ea/execution_events*.json",
+        "evaluation/**/execution_events*.json",
+        "provenance/**/execution_events*.json",
+        "literature/**/execution_events*.json",
+    ):
+        candidates.update(path for path in project.glob(pattern) if path.is_file())
+    events: list[dict[str, Any]] = []
+    for path in sorted(candidates, key=lambda value: (value.stat().st_mtime, str(value)))[:limit]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        raw_events = payload.get("events") if isinstance(payload, dict) else payload
+        if not isinstance(raw_events, list):
+            continue
+        ref = str(path.relative_to(project))
+        for index, item in enumerate(raw_events):
+            normalized = _normalize_execution_event(item, ref, index) if isinstance(item, dict) else None
+            if normalized:
+                events.append(normalized)
+
+    by_id = {event["event_id"]: event for event in events}
+    resolved_ids: set[str] = set()
+    for event in events:
+        resolved_ids.update(value for value in event["supersedes"] if value in by_id)
+        if event.get("reconciliation") in {"resolved", "reconciled", "superseded"}:
+            resolved_ids.add(event["event_id"])
+
+    by_scope: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        by_scope.setdefault(event["scope_id"], []).append(event)
+    for scoped in by_scope.values():
+        scoped.sort(key=lambda event: (event.get("occurred_at") or "", event["attempt"], event["event_id"]))
+        latest = scoped[-1]
+        if latest["status"] in {"completed", "recovered"}:
+            resolved_ids.update(event["event_id"] for event in scoped[:-1] if event["status"] in {"failed", "partial"})
+        for event in scoped:
+            if event["event_id"] in resolved_ids:
+                event["history_state"] = "resolved_historical"
+            elif event is latest:
+                event["history_state"] = "current"
+            else:
+                event["history_state"] = "unreconciled"
+
+    summary = {"current": 0, "unreconciled": 0, "resolved_historical": 0}
+    for event in events:
+        summary[event["history_state"]] += 1
+    return {
+        "schema_version": "ea-feedback-execution-events-v1",
+        "event_count": len(events),
+        "summary": summary,
+        "events": events,
+        "read_scope": "structured execution-event JSON only",
+    }
+
+
+def summarize_current_validation(project: Path) -> dict[str, Any]:
+    candidates: list[Path] = []
+    for pattern in ("evaluation/**/*", ".ea/health*", "health*", "eval*"):
+        candidates.extend(
+            path
+            for path in project.glob(pattern)
+            if path.is_file() and path.suffix.lower() in {".json", ".yml", ".yaml", ".md", ".txt"}
+        )
+    if not candidates:
+        return {"status": "unknown", "ref": None}
+    latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    text = read_text(latest, limit=12000)
+    status_match = re.search(r"(?im)^\s*(?:overall_)?status\s*[:=]\s*['\"]?([a-z_-]+)", text)
+    status = status_match.group(1).lower() if status_match else "unknown"
+    if status in {"passed", "success", "complete", "completed", "healthy"}:
+        status = "pass"
+    elif status in {"failed", "error", "unhealthy"}:
+        status = "fail"
+    return {"status": status, "ref": str(latest.relative_to(project)), "modified_at": latest.stat().st_mtime}
+
+
 def summarize_project(project: Path) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "root": str(project),
@@ -251,6 +432,8 @@ def summarize_project(project: Path) -> dict[str, Any]:
         },
         "reviews": summarize_reviews(project),
         "literature_acquisition": summarize_literature_acquisition(project),
+        "execution_events": collect_execution_events(project),
+        "current_validation": summarize_current_validation(project),
         "potential_findings": scan_findings(project),
     }
     for rel in summary["latest_eval_files"][:1] + summary["latest_brief_files"][:2]:
@@ -304,16 +487,19 @@ def collect_planning_files(workspace: Path) -> list[dict[str, str]]:
 def build_context(workspace: Path, user_notes: str | None = None) -> dict[str, Any]:
     workspace = workspace.resolve()
     projects = find_ea_projects(workspace)
+    ea_cli = discover_ea_cli(workspace)
     return {
-        "feedback_context_schema": "ea-feedback-context-v1",
+        "feedback_context_schema": "ea-feedback-context-v2",
         "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "workspace": str(workspace),
         "user_notes": user_notes or "",
         "commands": {
-            "ea_version": run_command(["ea", "version"], cwd=workspace),
+            "ea_version": ea_cli.get("probe")
+            or {"available": False, "returncode": 127, "stderr": "EA CLI not found"},
             "git_status": run_command(["git", "status", "--short"], cwd=workspace),
             "gh_auth_status": run_command(["gh", "auth", "status"], cwd=workspace),
         },
+        "ea_cli_discovery": ea_cli,
         "installed_ea_skills": find_installed_ea_skills(),
         "ea_projects": [summarize_project(p) for p in projects],
         "planning_files": collect_planning_files(workspace),

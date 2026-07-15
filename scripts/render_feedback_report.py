@@ -121,8 +121,37 @@ def detect_issues(context: dict[str, Any]) -> list[dict[str, Any]]:
                 )
             )
 
+        execution_events = project.get("execution_events", {}).get("events", [])
+        active_problem_events = [
+            event
+            for event in execution_events
+            if event.get("history_state") in {"current", "unreconciled"}
+            and event.get("status") in {"failed", "partial"}
+        ]
+        if active_problem_events:
+            issues.append(
+                issue(
+                    "P1",
+                    "Current or unreconciled EA execution events need attention",
+                    "runtime-error",
+                    "high",
+                    [
+                        (
+                            f"{event.get('stage')} attempt {event.get('attempt')}: {event.get('status')} "
+                            f"({event.get('error_code') or 'no error code'}); next: {event.get('next_action') or 'unspecified'}"
+                        )
+                        for event in active_problem_events[:5]
+                    ],
+                    "Structured execution history contains a failure or partial stage that has not been superseded or reconciled.",
+                    "The current run may be incomplete even when older artifacts contain unrelated status text.",
+                    "Resolve the recorded next action and append a recovered/completed event that supersedes the failed attempt.",
+                    "Collector classifies the old event as resolved_historical and reports the recovered/completed event as current.",
+                )
+            )
+
         potential = project.get("potential_findings", [])
-        if potential:
+        validation_status = project.get("current_validation", {}).get("status")
+        if potential and not (validation_status == "pass" and not active_problem_events):
             evidence = [f"{p['path']}: {p['line']}" for p in potential[:5]]
             issues.append(
                 issue(
@@ -166,6 +195,22 @@ def detect_issues(context: dict[str, Any]) -> list[dict[str, Any]]:
                 "Users may perceive EA as heavy even when the underlying audit model is valuable.",
                 "Add progressive disclosure, reduce default command catalogs, and avoid formal writes during consult-only exchanges.",
                 "A comparable session completes with shorter visible output and fewer loaded references.",
+            )
+        )
+
+    cli_discovery = context.get("ea_cli_discovery", {})
+    if cli_discovery.get("status") != "available":
+        issues.append(
+            issue(
+                "P1",
+                "EA CLI executable could not be discovered",
+                "install-version",
+                "high",
+                [f"Discovery attempts: {len(cli_discovery.get('attempts') or [])}; selected source: unknown."],
+                "No explicit EA_BIN, current-Python installation, project virtualenv executable, or PATH command passed `ea version`.",
+                "The report cannot reliably identify the tested EA runtime.",
+                "Install EA in the active project virtualenv or set EA_BIN to the intended executable before collecting feedback.",
+                "Collector reports an available source and the exact executable reference used for `ea version`.",
             )
         )
 
@@ -226,6 +271,8 @@ def render_report(context: dict[str, Any], feedback_id: str, slug: str) -> str:
         f"- Status: `ready_for_user_review`",
         f"- Created: `{context.get('created_at', '')}`",
         f"- EA version: `{extract_ea_version(context)}`",
+        f"- EA executable source: `{context.get('ea_cli_discovery', {}).get('source', 'unknown')}`",
+        f"- EA executable ref: `{context.get('ea_cli_discovery', {}).get('executable_ref') or 'unknown'}`",
         f"- Workspace: `{context.get('workspace', '')}`",
         f"- EA project roots inspected: {len(ea_projects)}",
         f"- Detected actionable issue count: {issue_count}",
@@ -287,6 +334,8 @@ def render_report(context: dict[str, Any], feedback_id: str, slug: str) -> str:
                 f"  - latest eval files: `{project.get('latest_eval_files')}`",
                 f"  - latest brief files: `{project.get('latest_brief_files')}`",
                 f"  - review statuses: `{project.get('reviews', {}).get('statuses')}`",
+                f"  - current validation: `{project.get('current_validation')}`",
+                f"  - execution event summary: `{project.get('execution_events', {}).get('summary')}`",
             ]
         )
     return "\n".join(lines).rstrip() + "\n"

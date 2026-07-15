@@ -120,6 +120,12 @@ Suggested email subject:
 [EA-feedback] <Feedback ID> <short summary>
 ```
 
+Distinguish `draft_prepared` from `draft_verified`. A verified draft must round-trip as UTF-8, have balanced Markdown fences, and pass the public redaction scan before it is reported as ready.
+
+## Optional Browser Handoff
+
+When the user explicitly prefers a browser handoff, `submit_feedback.py --browser-handoff-dir ...` may prepare a validated public-safe title/body record. Browser control may open the public issue form and fill only those prepared fields. Pause if login is required; never inspect cookies, passwords, tokens, profiles, or unrelated pages. After the user submits, verify that the final URL begins with the expected repository issue URL. Preparing a handoff is not the same as submitting an issue.
+
 ## Submission Failure Channel
 
 Submission attempts must be bounded. Do not repeatedly try GitHub login, browser login, OAuth flows, email account setup, or network repair from this skill.
