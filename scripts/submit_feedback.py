@@ -9,7 +9,9 @@ GitHub or prepares one local email draft fallback.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -28,27 +30,41 @@ TOKEN_PATTERNS = [
 ]
 
 
+def _utf8_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _decode_utf8(value: bytes | str | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def run_command(args: list[str], timeout: int = 20) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             args,
-            text=True,
+            text=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
+            env=_utf8_environment(),
         )
         return {
             "command": args,
             "returncode": completed.returncode,
-            "stdout": redact(completed.stdout.strip()),
-            "stderr": redact(completed.stderr.strip()),
+            "stdout": redact(_decode_utf8(completed.stdout).strip()),
+            "stderr": redact(_decode_utf8(completed.stderr).strip()),
         }
     except FileNotFoundError:
         return {"command": args, "available": False, "returncode": 127, "stderr": f"{args[0]} not found"}
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stdout = _decode_utf8(exc.stdout)
+        stderr = _decode_utf8(exc.stderr)
         return {
             "command": args,
             "timeout": timeout,
@@ -70,7 +86,34 @@ def redact(text: str) -> str:
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8")
+
+
+def validate_public_body(body: str) -> dict[str, Any]:
+    encoded = body.encode("utf-8")
+    roundtrip = encoded.decode("utf-8")
+    secret_matches = [pattern.pattern for pattern in TOKEN_PATTERNS if pattern.search(body)]
+    emails = [value for value in re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", body) if value != DEFAULT_EMAIL]
+    private_paths = re.findall(r"/Users/(?!<user>)[^/\s]+", body)
+    checks = {
+        "utf8_roundtrip": roundtrip == body,
+        "replacement_character_absent": "�" not in body,
+        "markdown_fences_balanced": body.count("```") % 2 == 0,
+        "secret_patterns_absent": not secret_matches,
+        "private_emails_absent": not emails,
+        "private_home_paths_absent": not private_paths,
+    }
+    return {
+        "status": "pass" if all(checks.values()) else "fail",
+        "checks": checks,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "size_bytes": len(encoded),
+        "failures": {
+            "secret_patterns": secret_matches,
+            "private_emails": emails,
+            "private_home_paths": private_paths,
+        },
+    }
 
 
 def extract_feedback_id(text: str, fallback: str | None = None) -> str:
@@ -154,7 +197,50 @@ def write_email_draft(
         ]
     )
     draft_path.write_text(content, encoding="utf-8")
-    return {"status": "email_draft_prepared", "path": str(draft_path), "recipient": recipient}
+    preparation_status = "draft_prepared"
+    written = draft_path.read_text(encoding="utf-8")
+    validation = validate_public_body(written)
+    verified = written == content and validation["status"] == "pass"
+    return {
+        "status": "draft_verified" if verified else "draft_prepared",
+        "preparation_status": preparation_status,
+        "verification_status": "draft_verified" if verified else "verification_failed",
+        "validation": validation,
+        "path": str(draft_path),
+        "recipient": recipient,
+    }
+
+
+def write_browser_handoff(
+    *,
+    feedback_id: str,
+    title: str,
+    body: str,
+    handoff_dir: Path,
+    repo: str,
+) -> dict[str, Any]:
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    body_path = handoff_dir / f"{feedback_id}-github-body.md"
+    record_path = handoff_dir / f"{feedback_id}-browser-handoff.json"
+    body_path.write_text(body, encoding="utf-8")
+    validation = validate_public_body(body_path.read_text(encoding="utf-8"))
+    payload = {
+        "status": "browser_handoff_prepared" if validation["status"] == "pass" else "verification_failed",
+        "feedback_id": feedback_id,
+        "target_url": f"https://github.com/{repo}/issues/new",
+        "expected_final_url_prefix": f"https://github.com/{repo}/issues/",
+        "title": title,
+        "body_path": str(body_path),
+        "validation": validation,
+        "requires_user_login": True,
+        "browser_boundary": (
+            "Open and fill only public-safe issue fields. Pause for user login if needed; do not read cookies, passwords, "
+            "tokens, or unrelated pages. Verify the final issue URL after the user submits."
+        ),
+    }
+    record_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload["record_path"] = str(record_path)
+    return payload
 
 
 def failure_message(github_failure: dict[str, Any] | None, email_failure: dict[str, Any] | None) -> str:
@@ -199,6 +285,17 @@ def submit(args: argparse.Namespace) -> dict[str, Any]:
         "email": {"attempted": False},
     }
 
+    body_validation = validate_public_body(body_text)
+    base["public_body_validation"] = body_validation
+    if body_validation["status"] != "pass":
+        return {
+            **base,
+            "status": "submission_failed",
+            "channel": "validation",
+            "message": "Public body failed UTF-8, Markdown render, or redaction validation; no submission was attempted.",
+            "recommended_recovery": ["Review the validation failures, redact the report, and prepare a new public-safe body."],
+        }
+
     if args.dry_run:
         return {**base, "status": "dry_run", "message": "No submission attempted."}
 
@@ -242,6 +339,28 @@ def submit(args: argparse.Namespace) -> dict[str, Any]:
     else:
         github_failure = {"stage": "disabled", "reason": "GitHub submission disabled by --github-mode disabled"}
 
+    browser_handoff_dir = getattr(args, "browser_handoff_dir", None)
+    if browser_handoff_dir:
+        try:
+            handoff = write_browser_handoff(
+                feedback_id=feedback_id,
+                title=title,
+                body=body_text,
+                handoff_dir=Path(browser_handoff_dir),
+                repo=args.repo,
+            )
+            if handoff["status"] == "browser_handoff_prepared":
+                return {
+                    **base,
+                    "status": "browser_handoff_prepared",
+                    "channel": "browser_handoff",
+                    "browser_handoff": handoff,
+                    "github_failure": github_failure,
+                    "message": "A validated public-safe browser handoff was prepared; no login or issue submission was attempted.",
+                }
+        except OSError as exc:
+            base["browser_handoff_failure"] = {"stage": "draft", "reason": str(exc)}
+
     email_failure: dict[str, Any] | None = None
     if args.email_mode != "disabled":
         base["email"]["attempted"] = True
@@ -255,7 +374,7 @@ def submit(args: argparse.Namespace) -> dict[str, Any]:
             )
             return {
                 **base,
-                "status": "email_draft_prepared",
+                "status": "email_draft_verified" if draft["status"] == "draft_verified" else "email_draft_prepared",
                 "channel": "email_draft",
                 "email": {**base["email"], **draft},
                 "github_failure": github_failure,
@@ -292,6 +411,10 @@ def main() -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--email-to", default=DEFAULT_EMAIL)
     parser.add_argument("--email-draft-dir")
+    parser.add_argument(
+        "--browser-handoff-dir",
+        help="Optionally prepare a validated public-safe browser handoff instead of attempting login.",
+    )
     parser.add_argument("--submission-record", help="Optional JSON sidecar path for the submission result.")
     parser.add_argument("--github-mode", choices=["auto", "disabled"], default="auto")
     parser.add_argument("--email-mode", choices=["draft", "disabled"], default="draft")

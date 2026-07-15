@@ -15,12 +15,12 @@ This skill must not modify EA projects, EA skill files, raw research data, or EA
 
 1. Identify the scope: current thread, selected EA project, package test output, manual trial, or user-supplied notes.
 2. Read `references/feedback-workflow.md` for the full operating procedure.
-3. Run `scripts/collect_ea_context.py` to collect read-only evidence into a JSON file. It may summarize recent EA literature acquisition status sidecars and Zotero readiness files, but it must not read cookies, credentials, raw PDFs, or private full text.
+3. Run `scripts/collect_ea_context.py` to collect read-only evidence into a JSON file. It discovers the actual EA executable in the order `EA_BIN` → current Python distribution/module → project `.venv` → `PATH`, records structured execution events, and may summarize recent EA literature acquisition status sidecars and Zotero readiness files. It must not read cookies, credentials, raw PDFs, or private full text.
 4. Combine the user's subjective feedback with collected evidence. Use `references/issue-taxonomy.md` to classify issues.
 5. Run `scripts/render_feedback_report.py` to create a draft Markdown feedback report.
 6. Improve the report with agent judgment: merge duplicates, add root-cause hypotheses, add safe recommendations, and mark confidence.
 7. Read `references/submission-policy.md` before any submission. Treat an explicit user request to upload/submit/send the finished feedback to developers as submission confirmation; do not ask again unless redaction risk, target ambiguity, or unavailable tooling blocks safe submission.
-8. Use `scripts/submit_feedback.py` for submission whenever possible. It checks duplicate feedback IDs by GitHub issue title metadata only, submits once through GitHub when available, prepares one email draft fallback when GitHub fails, and emits a `submission_failed` status instead of retrying account/login flows.
+8. Use `scripts/submit_feedback.py` for submission whenever possible. It validates UTF-8/render/redaction, checks duplicate feedback IDs by GitHub issue title metadata only, submits once through GitHub when available, and otherwise prepares either a verified email draft or an explicitly requested public-safe browser handoff. It emits `submission_failed` instead of retrying account/login flows.
 9. End by reporting the feedback file status: submitted URL, email draft path, local report path, or submission-failed reason with concise recovery guidance.
 
 ## Report Rules
