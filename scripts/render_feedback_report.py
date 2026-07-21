@@ -67,6 +67,26 @@ def issue(
     }
 
 
+def _deduplicate_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    severity_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    confidence_rank = {"high": 0, "medium": 1, "low": 2}
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in issues:
+        key = (candidate["category"], candidate["title"])
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = {**candidate, "evidence": list(candidate["evidence"])}
+            continue
+        existing["evidence"] = list(
+            dict.fromkeys([*existing["evidence"], *candidate["evidence"]])
+        )
+        if severity_rank[candidate["severity"]] < severity_rank[existing["severity"]]:
+            existing["severity"] = candidate["severity"]
+        if confidence_rank[candidate["confidence"]] < confidence_rank[existing["confidence"]]:
+            existing["confidence"] = candidate["confidence"]
+    return list(merged.values())
+
+
 def detect_issues(context: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     user_notes = context.get("user_notes", "")
@@ -214,6 +234,7 @@ def detect_issues(context: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
+    issues = _deduplicate_issues(issues)
     if not issues:
         issues.append(
             issue(

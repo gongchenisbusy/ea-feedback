@@ -20,9 +20,45 @@ def _load(name: str, path: Path):
 
 RENDER = _load("render_feedback_report", ROOT / "scripts" / "render_feedback_report.py")
 SUBMIT = _load("submit_feedback", ROOT / "scripts" / "submit_feedback.py")
+INTENT = _load("resolve_submission_intent", ROOT / "scripts" / "resolve_submission_intent.py")
 
 
 class RenderAndSubmitTest(unittest.TestCase):
+    def test_repeated_project_findings_are_deduplicated(self) -> None:
+        project = {
+            "counts": {},
+            "reviews": {"statuses": {}},
+            "potential_findings": [],
+            "current_validation": {"status": "pass"},
+            "execution_events": {"events": []},
+            "config_excerpt": "literature:\n  enabled: false\n",
+        }
+        context = {
+            "user_notes": "",
+            "installed_ea_skills": [],
+            "ea_cli_discovery": {"status": "available"},
+            "ea_projects": [
+                {**project, "root": "project-one"},
+                {**project, "root": "project-two"},
+            ],
+        }
+
+        issues = RENDER.detect_issues(context)
+
+        matching = [
+            item
+            for item in issues
+            if item["title"] == "Literature library capability may be hidden after initialization"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(len(matching[0]["evidence"]), 2)
+
+    def test_multilingual_imperatives_and_negation_resolve_submission_intent(self) -> None:
+        self.assertEqual(INTENT.classify("提交吧")["intent"], "explicit_submit")
+        self.assertEqual(INTENT.classify("Please submit it now.")["intent"], "explicit_submit")
+        self.assertEqual(INTENT.classify("先不要提交")["intent"], "defer_or_local")
+        self.assertEqual(INTENT.classify("Don't submit it.")["intent"], "defer_or_local")
+
     def test_current_pass_does_not_turn_old_failure_into_p1(self) -> None:
         context = {
             "user_notes": "",

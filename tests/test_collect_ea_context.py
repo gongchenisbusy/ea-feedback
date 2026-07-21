@@ -18,6 +18,59 @@ SPEC.loader.exec_module(MODULE)
 
 
 class LiteratureStatusCollectorTest(unittest.TestCase):
+    def test_installed_skill_discovery_defaults_to_active_install_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            active = home / ".codex" / "skills" / "ea" / "SKILL.md"
+            backup = home / ".codex" / "skills" / "backups" / "ea-old" / "SKILL.md"
+            feedback = home / ".codex" / "skills" / "ea-feedback" / "SKILL.md"
+            active.parent.mkdir(parents=True)
+            backup.parent.mkdir(parents=True)
+            feedback.parent.mkdir(parents=True)
+            active.write_text("---\nname: ea\n---\nExperimental Assistant active\n", encoding="utf-8")
+            backup.write_text("---\nname: ea\n---\nExperimental Assistant backup\n", encoding="utf-8")
+            feedback.write_text("---\nname: ea-feedback\n---\nExperimental Assistant feedback\n", encoding="utf-8")
+
+            with mock.patch.object(Path, "home", return_value=home):
+                default = MODULE.find_installed_ea_skills()
+                with_backups = MODULE.find_installed_ea_skills(include_backups=True)
+
+            self.assertEqual([item["path"] for item in default], [str(active)])
+            self.assertEqual(len(with_backups), 2)
+            self.assertTrue(default[0]["active_install"])
+
+    def test_local_context_collection_does_not_probe_github_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            calls: list[list[str]] = []
+
+            def fake_run(args, cwd, timeout=10):
+                calls.append(args)
+                return {"command": args, "returncode": 0}
+
+            with (
+                mock.patch.object(MODULE, "run_command", side_effect=fake_run),
+                mock.patch.object(MODULE, "discover_ea_cli", return_value={"status": "unknown", "probe": None}),
+                mock.patch.object(MODULE, "find_ea_projects", return_value=[]),
+                mock.patch.object(MODULE, "find_installed_ea_skills", return_value=[]),
+            ):
+                context = MODULE.build_context(workspace)
+
+            self.assertEqual(calls, [["git", "status", "--short"]])
+            self.assertNotIn("gh_auth_status", context["commands"])
+
+    def test_structured_warning_codes_are_not_runtime_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            reports = project / "reports"
+            reports.mkdir()
+            (reports / "warning-only.yml").write_text(
+                "status: pass\nwarning_count: 1\nwarning_codes:\n- optional_literature_missing\nfindings:\n- severity: warning\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(MODULE.scan_findings(project), [])
+
     def test_collects_only_status_sidecars_and_counts_mixed_batch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
