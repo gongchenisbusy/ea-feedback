@@ -19,7 +19,7 @@ It is deliberately separate from EA. It must not ask EA to add bulky feedback-on
 Collect evidence without modifying EA state:
 
 - EA CLI version from `ea version` when available.
-- Installed EA skill paths and `SKILL.md` size/line counts.
+- Active installed EA skill paths and `SKILL.md` size/line counts. Historical or nested backups are excluded unless `--include-skill-backups` is explicitly requested.
 - Candidate EA project roots containing `EA_PROJECT.md`.
 - Project config, rule card, latest briefs, latest eval files, open items, progress, reviews, and provenance summaries.
 - Existing planning files such as `task_plan.md`, `progress.md`, `findings.md`, and `.planning/*` when present.
@@ -29,7 +29,7 @@ Collect evidence without modifying EA state:
 - Recent `literature/**/acquisition_status*.{md,json}` and `zotero_codex_readiness.*` sidecars, summarized as acquired/blocked counts only.
 
 Do not run mutating EA commands such as `ea eval project` or `ea brief project` unless the user explicitly requests it. Prefer reading existing artifacts.
-Do not read cookies, credentials, raw PDFs, or private full text while collecting literature status.
+Do not read cookies, credentials, raw PDFs, or private full text while collecting literature status. Local collection must not run `gh auth status` or any other external submission-readiness probe.
 
 ## Analysis Procedure
 
@@ -49,9 +49,10 @@ Do not read cookies, credentials, raw PDFs, or private full text while collectin
    - high: direct command output or file evidence,
    - medium: consistent pattern from artifacts and user report,
    - low: plausible hypothesis requiring developer validation.
-5. Propose safe optimizations that preserve EA's core architecture.
-6. Add acceptance criteria that developers can test.
-7. Mark non-goals and dangerous shortcuts when relevant.
+5. Merge equivalent findings across projects and repeated artifacts by root cause, retaining distinct evidence under one canonical issue.
+6. Propose safe optimizations that preserve EA's core architecture.
+7. Add acceptance criteria that developers can test.
+8. Mark non-goals and dangerous shortcuts when relevant.
 
 ## Feedback File Lifecycle
 

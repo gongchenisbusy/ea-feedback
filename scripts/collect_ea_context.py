@@ -30,7 +30,7 @@ SKIP_DIRS = {
 }
 
 ERROR_PATTERNS = re.compile(
-    r"(traceback|error|fail|failed|warning|review_ref_not_confirmed|exception)",
+    r"(traceback|error|fail|failed|review_ref_not_confirmed|exception)",
     re.IGNORECASE,
 )
 
@@ -441,18 +441,25 @@ def summarize_project(project: Path) -> dict[str, Any]:
     return summary
 
 
-def find_installed_ea_skills() -> list[dict[str, Any]]:
+def find_installed_ea_skills(*, include_backups: bool = False) -> list[dict[str, Any]]:
     roots = [
         Path.home() / ".codex" / "skills",
         Path.home() / ".agents" / "skills",
     ]
     results: list[dict[str, Any]] = []
+    seen: set[Path] = set()
     for root in roots:
         if not root.exists():
             continue
-        for path in root.rglob("SKILL.md"):
+        candidates = root.rglob("SKILL.md") if include_backups else root.glob("*/SKILL.md")
+        for path in candidates:
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
             text = read_text(path, limit=2000)
-            if "Experimental Assistant" not in text and "ea-v0-2" not in str(path):
+            named_ea = bool(re.search(r"(?m)^name:\s*ea\s*$", text))
+            if not named_ea:
                 continue
             try:
                 full_text = path.read_text(encoding="utf-8", errors="replace")
@@ -464,9 +471,10 @@ def find_installed_ea_skills() -> list[dict[str, Any]]:
                     "bytes": len(full_text.encode("utf-8", errors="replace")),
                     "lines": full_text.count("\n") + 1,
                     "excerpt": text,
+                    "active_install": path.parent.parent.resolve() == root.resolve(),
                 }
             )
-    return results
+    return sorted(results, key=lambda item: (not item["active_install"], item["path"]))
 
 
 def collect_planning_files(workspace: Path) -> list[dict[str, str]]:
@@ -484,7 +492,12 @@ def collect_planning_files(workspace: Path) -> list[dict[str, str]]:
     return [{"path": str(p), "excerpt": read_text(p, limit=5000)} for p in files if p.is_file()]
 
 
-def build_context(workspace: Path, user_notes: str | None = None) -> dict[str, Any]:
+def build_context(
+    workspace: Path,
+    user_notes: str | None = None,
+    *,
+    include_skill_backups: bool = False,
+) -> dict[str, Any]:
     workspace = workspace.resolve()
     projects = find_ea_projects(workspace)
     ea_cli = discover_ea_cli(workspace)
@@ -497,10 +510,16 @@ def build_context(workspace: Path, user_notes: str | None = None) -> dict[str, A
             "ea_version": ea_cli.get("probe")
             or {"available": False, "returncode": 127, "stderr": "EA CLI not found"},
             "git_status": run_command(["git", "status", "--short"], cwd=workspace),
-            "gh_auth_status": run_command(["gh", "auth", "status"], cwd=workspace),
         },
         "ea_cli_discovery": ea_cli,
-        "installed_ea_skills": find_installed_ea_skills(),
+        "installed_ea_skills": find_installed_ea_skills(
+            include_backups=include_skill_backups
+        ),
+        "skill_discovery_scope": (
+            "active_installs_and_backups"
+            if include_skill_backups
+            else "active_installs_only"
+        ),
         "ea_projects": [summarize_project(p) for p in projects],
         "planning_files": collect_planning_files(workspace),
     }
@@ -511,9 +530,18 @@ def main() -> int:
     parser.add_argument("--workspace", default=".", help="Workspace to inspect.")
     parser.add_argument("--output", required=True, help="JSON output path.")
     parser.add_argument("--user-notes", default="", help="Optional user feedback notes.")
+    parser.add_argument(
+        "--include-skill-backups",
+        action="store_true",
+        help="Include historical/nested Skill copies; default evidence uses active installs only.",
+    )
     args = parser.parse_args()
 
-    context = build_context(Path(args.workspace), user_notes=args.user_notes)
+    context = build_context(
+        Path(args.workspace),
+        user_notes=args.user_notes,
+        include_skill_backups=args.include_skill_backups,
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")

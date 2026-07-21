@@ -58,6 +58,8 @@ Each issue should include at least one evidence item:
 
 Avoid unsupported claims. If evidence is weak, mark confidence `low` and phrase as a hypothesis.
 
+Structured `warning_codes`, `warning_count`, and `severity: warning` records are not runtime failures by themselves. Promote a finding to P0/P1 only when current validation fails, an explicit error/traceback is present, or a failed/partial execution event remains current or unreconciled.
+
 ## Safe Recommendation Rules
 
 Good recommendations:

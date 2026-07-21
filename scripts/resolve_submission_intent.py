@@ -16,6 +16,8 @@ NEGATIVE_PATTERNS = [
 ]
 
 EXPLICIT_SUBMIT_PATTERNS = [
+    r"^(?:请|现在|直接|马上|可以)?\s*(?:上传|提交|发送|发布)(?:一下|它|这个|吧|了|即可|就行|就好|！|!|。|\s)*$",
+    r"^(?:please\s+)?(?:submit|upload|send|publish)(?:\s+(?:it|this|the report))?(?:\s+(?:now|please))?[.!]?$",
     r"(上传|提交|发给|发送|创建|发布).{0,24}(开发者端|开发者|github|GitHub|issue|Issue|仓库|邮箱|邮件)",
     r"(开发者端|开发者|github|GitHub|issue|Issue|仓库|邮箱|邮件).{0,24}(上传|提交|发送|发给|创建|发布)",
     r"(做完|完成|生成|修改好|整理好|形成|写好).{0,24}(就可以|可以|直接|自动).{0,24}(上传|提交|发给|发送|发布)",
